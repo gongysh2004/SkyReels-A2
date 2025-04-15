@@ -8,6 +8,7 @@ from diffusers.video_processor import VideoProcessor
 from diffusers import UniPCMultistepScheduler 
 from diffusers.utils import export_to_video, load_image 
 from diffusers.image_processor import VaeImageProcessor
+from diffusers.training_utils import free_memory
 
 from models.transformer_a2 import A2Model 
 from models.pipeline_a2_parallel import WanA2Pipeline 
