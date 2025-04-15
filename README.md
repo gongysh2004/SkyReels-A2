@@ -60,7 +60,8 @@ This repo, named **SkyReels-A2**, contains the official PyTorch implementation o
 ## 📑 TODO List
 - [x] Support A2-Bench evaluation and leaderboard.
 - [x] ComfyUI
-- [ ] User-Level GPU Inference on RTX4090
+- [x] Parallel Inference on Multi-GPUs
+- [x] User-Level GPU Inference on RTX4090
 - [ ] Release all model sequence, including infinity-long version.
 - [ ] Diffusers
 
@@ -69,6 +70,7 @@ This repo, named **SkyReels-A2**, contains the official PyTorch implementation o
 |--------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------|
 | A2-Wan2.1-14B-Preview | [Huggingface](https://huggingface.co/Skywork/SkyReels-A2) 🤗                                                                                                                                                              | ~ 81 x 480 x 832    | 
 | A2-Wan2.1-14B         | [To be released](https://github.com/SkyworkAI/SkyReels-A2)  | ~ 81 x 480 x 832    | 
+| A2-Wan2.1-14B-Pro         | [To be released](https://github.com/SkyworkAI/SkyReels-A2)  | ~ 97 x 544 x 960    | 
 | A2-Wan2.1-14B-Infinity         | [To be released](https://github.com/SkyworkAI/SkyReels-A2)  | ~ Inf x 720 x 1080   | 
 
 
@@ -114,8 +116,9 @@ If the script runs successfully, you will get an output mp4 file. This file incl
 
 We also support multi-GPU inference scripts for faster inference, as:
 ```bash
-python infer_MGPU.py
+torchrun --nproc_per_node=$GPU_NUM infer_MGPU.py
 ```
+Set the offload_switch of infer_MGPU.py to True, and you can run it on RTX4090
 
 
 #### Gradio Interface 🤗
