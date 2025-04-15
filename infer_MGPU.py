@@ -10,9 +10,18 @@ from diffusers.utils import export_to_video, load_image
 from diffusers.image_processor import VaeImageProcessor
 
 from models.transformer_a2 import A2Model 
-from models.pipeline_a2 import A2Pipeline 
+from models.pipeline_a2_parallel import WanA2Pipeline 
 from models.utils import _crop_and_resize_pad, _crop_and_resize, write_mp4
 from huggingface_hub import snapshot_download
+
+import torch.distributed as dist
+from para_attn.context_parallel import init_context_parallel_mesh
+from para_attn.context_parallel.diffusers_adapters import parallelize_pipe
+from offload import OffloadConfig, Offload
+
+dist.init_process_group("nccl")
+torch.cuda.set_device(dist.get_rank())
+os.environ['LOCAL_RANK'] = str(dist.get_rank())
 
 
 prompt = "A man is holding a teddy bear in the forest." 
@@ -22,6 +31,9 @@ refer_images = ['assets/human.png', 'assets/thing.png', 'assets/env.png']
 width = 832
 height = 480 
 seed = 42 
+# if RTX4090, set True
+# offload_switch = True
+offload_switch = False
 
 # model parameters 
 device = "cuda"
@@ -42,11 +54,29 @@ transformer = A2Model.from_pretrained(model_path, torch_dtype=dtype, use_safeten
 # # transformer.save_pretrained("transformer", max_shard_size="5GB") 
 transformer.to(device, dtype=dtype) 
 
-pipe = A2Pipeline.from_pretrained(pipeline_path, transformer=transformer, vae=vae, image_encoder=image_encoder, torch_dtype=dtype)
+pipe = WanA2Pipeline.from_pretrained(pipeline_path, transformer=transformer, vae=vae, image_encoder=image_encoder, torch_dtype=dtype)
 
 scheduler = UniPCMultistepScheduler(prediction_type='flow_prediction', use_flow_sigmas=True, num_train_timesteps=1000, flow_shift=8)
 pipe.scheduler = scheduler 
+mesh = init_context_parallel_mesh(
+        pipe.device.type,
+        max_ring_dim_size=1,
+        max_batch_dim_size=2,
+    )
+parallelize_pipe(pipe, mesh=mesh)
+transformer.to(device, dtype=dtype) 
 pipe.to(device)
+
+# for RTX4090
+if offload_switch:
+    Offload.offload(
+        pipeline=pipe,
+        config=OffloadConfig(
+            high_cpu_memory=True,
+            parameters_level=True,
+            compiler_transformer=False,
+        ),
+    )
 
 
 VAE_SCALE_FACTOR_SPATIAL = 8
@@ -88,6 +118,9 @@ video_pt = pipe(
     vae_combine="before",
 ).frames
 
+dist.barrier()
+free_memory()
+
 
 # combine results
 batch_size = video_pt.shape[0]
@@ -113,5 +146,7 @@ for q in range(len(video_generate)):
     result.paste(frame3, (width*2, 0)) 
     result.paste(frame4, (width*3, 0)) 
     final_images.append(np.array(result))
+dist.barrier()
 
-write_mp4(video_path, final_images, fps=15) 
+if dist.get_rank() == 0:
+    write_mp4(video_path, final_images, fps=15) 

@@ -59,7 +59,7 @@ def retrieve_latents(
         raise AttributeError("Could not access latents of provided encoder_output")
 
 
-class A2Pipeline(DiffusionPipeline, WanLoraLoaderMixin):
+class WanA2Pipeline(DiffusionPipeline, WanLoraLoaderMixin):
     r"""
     Pipeline for image-to-video generation using Wan.
 
@@ -597,6 +597,10 @@ class A2Pipeline(DiffusionPipeline, WanLoraLoaderMixin):
             vae_repeat,
         )
 
+        if self.do_classifier_free_guidance:
+            prompt_embeds = torch.cat([negative_prompt_embeds, prompt_embeds])
+            image_embeds = torch.cat([image_embeds]*2)
+
         # 6. Denoising loop
         num_warmup_steps = len(timesteps) - num_inference_steps * self.scheduler.order
         self._num_timesteps = len(timesteps)
@@ -608,7 +612,8 @@ class A2Pipeline(DiffusionPipeline, WanLoraLoaderMixin):
 
                 self._current_timestep = t
                 latent_model_input = torch.cat([latents, condition], dim=1).to(transformer_dtype)
-                timestep = t.expand(latents.shape[0])
+                latent_model_input = torch.cat([latent_model_input] * 2) if self.do_classifier_free_guidance else latent_model_input
+                timestep = t.expand(latent_model_input.shape[0])
 
                 noise_pred = self.transformer(
                     hidden_states=latent_model_input,
@@ -620,14 +625,15 @@ class A2Pipeline(DiffusionPipeline, WanLoraLoaderMixin):
                 )[0]
 
                 if self.do_classifier_free_guidance:
-                    noise_uncond = self.transformer(
-                        hidden_states=latent_model_input,
-                        timestep=timestep,
-                        encoder_hidden_states=negative_prompt_embeds,
-                        encoder_hidden_states_image=image_embeds,
-                        attention_kwargs=attention_kwargs,
-                        return_dict=False,
-                    )[0]
+                    # noise_uncond = self.transformer(
+                    #     hidden_states=latent_model_input,
+                    #     timestep=timestep,
+                    #     encoder_hidden_states=negative_prompt_embeds,
+                    #     encoder_hidden_states_image=image_embeds,
+                    #     attention_kwargs=attention_kwargs,
+                    #     return_dict=False,
+                    # )[0]
+                    noise_uncond, noise_pred = noise_pred.chunk(2)
                     noise_pred = noise_uncond + guidance_scale * (noise_pred - noise_uncond)
 
                 # compute the previous noisy sample x_t -> x_t-1
