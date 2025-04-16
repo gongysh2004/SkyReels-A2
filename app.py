@@ -15,13 +15,15 @@ from models.pipeline_a2 import A2Pipeline
 from models.utils import _crop_and_resize_pad, write_mp4
 import hashlib
 import time
+from huggingface_hub import snapshot_download
+
 
 TMP_FILE_PATH = os.path.join(os.path.dirname(__file__), "tmp")
 if not os.path.exists(TMP_FILE_PATH):
     os.mkdir(TMP_FILE_PATH)
 
 DEFAULT_NEGATIVE_PROMPT = "Bright tones, overexposed, static, blurred details, subtitles, style, works, paintings, images, static, overall gray, worst quality, low quality, JPEG compression residue, ugly, incomplete, extra fingers, poorly drawn hands, poorly drawn faces, deformed, disfigured, misshapen limbs, fused fingers, still picture, messy background, three legs, many people in the background, walking backwards"
-
+snapshot_download(repo_id="Skywork/SkyReels-A2", local_dir="Skywork/SkyReels-A2")
 
 WIDTH = 832
 HEIGHT = 480
@@ -32,7 +34,7 @@ STEP = 50
 
 class ModelInference:
     def __init__(self):
-        self._pipeline_path =  "/path/to/model"
+        self._pipeline_path =  "Skywork/SkyReels-A2"
         self._model_path = os.path.join(self._pipeline_path, "transformer")
         self._dtype = torch.bfloat16
         self._device = "cuda"
