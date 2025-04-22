@@ -1,6 +1,6 @@
 import html
 from typing import Any, Callable, Dict, List, Optional, Union, Tuple
-
+import numpy as np
 import ftfy
 import regex as re
 import torch
@@ -57,6 +57,61 @@ def retrieve_latents(
         return encoder_output.latents
     else:
         raise AttributeError("Could not access latents of provided encoder_output")
+
+
+
+class TeaCache:
+    def __init__(self, num_inference_steps, rel_l1_thresh, model_id):
+        self.num_inference_steps = num_inference_steps
+        self.step = 0
+        self.accumulated_rel_l1_distance = 0
+        self.previous_modulated_input = None
+        self.rel_l1_thresh = rel_l1_thresh
+        self.previous_residual = None
+        self.previous_hidden_states = None
+        
+        self.coefficients_dict = {
+            "Wan2.1-T2V-1.3B": [-5.21862437e+04, 9.23041404e+03, -5.28275948e+02, 1.36987616e+01, -4.99875664e-02],
+            "Wan2.1-T2V-14B": [-3.03318725e+05, 4.90537029e+04, -2.65530556e+03, 5.87365115e+01, -3.15583525e-01],
+            "Wan2.1-I2V-14B-480P": [2.57151496e+05, -3.54229917e+04,  1.40286849e+03, -1.35890334e+01, 1.32517977e-01],
+            "Wan2.1-I2V-14B-720P": [ 8.10705460e+03,  2.13393892e+03, -3.72934672e+02,  1.66203073e+01, -4.17769401e-02],
+        }
+        if model_id not in self.coefficients_dict:
+            supported_model_ids = ", ".join([i for i in self.coefficients_dict])
+            raise ValueError(f"{model_id} is not a supported TeaCache model id. Please choose a valid model id in ({supported_model_ids}).")
+        self.coefficients = self.coefficients_dict[model_id]
+
+    def check(self, x, t_mod):
+        modulated_inp = t_mod.clone()
+        if self.step == 0 or self.step == self.num_inference_steps - 1:
+            should_calc = True
+            self.accumulated_rel_l1_distance = 0
+        else:
+            coefficients = self.coefficients
+            rescale_func = np.poly1d(coefficients)
+            self.accumulated_rel_l1_distance += rescale_func(((modulated_inp-self.previous_modulated_input).abs().mean() / self.previous_modulated_input.abs().mean()).cpu().item())
+            if self.accumulated_rel_l1_distance < self.rel_l1_thresh:
+                should_calc = False
+            else:
+                should_calc = True
+                self.accumulated_rel_l1_distance = 0
+        self.previous_modulated_input = modulated_inp
+        self.step += 1
+        if self.step == self.num_inference_steps:
+            self.step = 0
+        if should_calc:
+            self.previous_hidden_states = x.clone()
+        return not should_calc
+
+    def store(self, hidden_states):
+        self.previous_residual = hidden_states - self.previous_hidden_states
+        self.previous_hidden_states = None
+
+    def update(self, hidden_states):
+        hidden_states = hidden_states + self.previous_residual
+        return hidden_states
+
+
 
 
 class A2Pipeline(DiffusionPipeline, WanLoraLoaderMixin):
@@ -444,6 +499,8 @@ class A2Pipeline(DiffusionPipeline, WanLoraLoaderMixin):
         max_sequence_length: int = 512,
         vae_combine: str = "before",
         vae_repeat: bool = True,
+        tea_cache_l1_thresh=None,
+        tea_cache_model_id="",
     ):
         r"""
         The call function to the pipeline for generation.
@@ -597,6 +654,10 @@ class A2Pipeline(DiffusionPipeline, WanLoraLoaderMixin):
             vae_repeat,
         )
 
+        # TeaCache
+        tea_cache_posi = {"tea_cache": TeaCache(num_inference_steps, rel_l1_thresh=tea_cache_l1_thresh, model_id=tea_cache_model_id) if tea_cache_l1_thresh is not None else None}
+        tea_cache_nega = {"tea_cache": TeaCache(num_inference_steps, rel_l1_thresh=tea_cache_l1_thresh, model_id=tea_cache_model_id) if tea_cache_l1_thresh is not None else None}
+
         # 6. Denoising loop
         num_warmup_steps = len(timesteps) - num_inference_steps * self.scheduler.order
         self._num_timesteps = len(timesteps)
@@ -608,8 +669,7 @@ class A2Pipeline(DiffusionPipeline, WanLoraLoaderMixin):
 
                 self._current_timestep = t
                 latent_model_input = torch.cat([latents, condition], dim=1).to(transformer_dtype)
-                timestep = t.expand(latents.shape[0])
-
+                timestep = t.expand(latents.shape[0]) 
                 noise_pred = self.transformer(
                     hidden_states=latent_model_input,
                     timestep=timestep,
@@ -617,9 +677,10 @@ class A2Pipeline(DiffusionPipeline, WanLoraLoaderMixin):
                     encoder_hidden_states_image=image_embeds,
                     attention_kwargs=attention_kwargs,
                     return_dict=False,
+                    **tea_cache_posi,
                 )[0]
-
-                if self.do_classifier_free_guidance:
+                
+                if self.do_classifier_free_guidance: 
                     noise_uncond = self.transformer(
                         hidden_states=latent_model_input,
                         timestep=timestep,
@@ -627,7 +688,9 @@ class A2Pipeline(DiffusionPipeline, WanLoraLoaderMixin):
                         encoder_hidden_states_image=image_embeds,
                         attention_kwargs=attention_kwargs,
                         return_dict=False,
+                        **tea_cache_nega,
                     )[0]
+                    
                     noise_pred = noise_uncond + guidance_scale * (noise_pred - noise_uncond)
 
                 # compute the previous noisy sample x_t -> x_t-1
