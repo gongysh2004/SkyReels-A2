@@ -22,6 +22,13 @@ refer_images = ['assets/human.png', 'assets/thing.png', 'assets/env.png']
 width = 832
 height = 480 
 seed = 42 
+use_teacache = True 
+if use_teacache:
+    tea_cache_l1_thresh = 0.3
+    tea_cache_model_id = "Wan2.1-I2V-14B-480P"
+else:
+    tea_cache_l1_thresh = None
+    tea_cache_model_id = ""
 
 # model parameters 
 device = "cuda"
@@ -86,6 +93,8 @@ video_pt = pipe(
     output_type="pt",
     num_inference_steps=50,
     vae_combine="before",
+    tea_cache_l1_thresh=tea_cache_l1_thresh,
+    tea_cache_model_id=tea_cache_model_id,
 ).frames
 
 
