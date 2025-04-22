@@ -48,7 +48,7 @@
     👋 Join our <a href="https://discord.gg/PwM6NYtccQ" target="_blank"><strong>Discord</strong></a> 
 </p>
 
-This repo, named **SkyReels-A2**, contains the official PyTorch implementation of our paper [SkyReels-A2: Compose Anything in Video Diffusion Transformers](https://arxiv.org).
+This repo, named **SkyReels-A2**, contains the official PyTorch implementation of our paper [SkyReels-A2: Compose Anything in Video Diffusion Transformers](https://arxiv.org/pdf/2504.02436).
 
 ## 🎉 News
 
@@ -62,6 +62,7 @@ This repo, named **SkyReels-A2**, contains the official PyTorch implementation o
 - [x] Support A2-Bench evaluation and leaderboard.
 - [x] ComfyUI
 - [x] Parallel Inference on Multi-GPUs
+- [x] [TeaCache](https://github.com/ali-vilab/TeaCache) for faster inference
 - [x] User-Level GPU Inference on RTX4090
 - [ ] Release all model sequence, including infinity-long version.
 - [ ] Diffusers
