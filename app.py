@@ -4,7 +4,7 @@ import torch
 from PIL import Image 
 import numpy as np 
 from diffusers import AutoencoderKLWan
-from transformers import CLIPVisionModel 
+from transformers import CLIPVisionModel, UMT5EncoderModel 
 from diffusers.video_processor import VideoProcessor
 from diffusers import UniPCMultistepScheduler 
 from diffusers.utils import export_to_video, load_image 
@@ -17,36 +17,45 @@ import hashlib
 import time
 from huggingface_hub import snapshot_download
 
+from torchao.quantization import int8_weight_only, quantize_
 
 TMP_FILE_PATH = os.path.join(os.path.dirname(__file__), "tmp")
 if not os.path.exists(TMP_FILE_PATH):
     os.mkdir(TMP_FILE_PATH)
 
 DEFAULT_NEGATIVE_PROMPT = "Bright tones, overexposed, static, blurred details, subtitles, style, works, paintings, images, static, overall gray, worst quality, low quality, JPEG compression residue, ugly, incomplete, extra fingers, poorly drawn hands, poorly drawn faces, deformed, disfigured, misshapen limbs, fused fingers, still picture, messy background, three legs, many people in the background, walking backwards"
-snapshot_download(repo_id="Skywork/SkyReels-A2", local_dir="Skywork/SkyReels-A2")
+# snapshot_download(repo_id="Skywork/SkyReels-A2", local_dir="Skywork/SkyReels-A2")
 
 WIDTH = 832
 HEIGHT = 480
 NUM_FRAMES = 81
 GUIDANCE_SCALE = 5.0
 VAE_SCALE_FACTOR_SPATIAL = 8
-STEP = 50
+STEP = 20
 
 class ModelInference:
     def __init__(self):
-        self._pipeline_path =  "Skywork/SkyReels-A2"
+        self._pipeline_path =  "/gm-models/model_scope/Skywork/SkyReels-A2"
         self._model_path = os.path.join(self._pipeline_path, "transformer")
         self._dtype = torch.bfloat16
         self._device = "cuda"
         self._image_encoder = CLIPVisionModel.from_pretrained(self._pipeline_path, subfolder="image_encoder", torch_dtype=torch.float32) 
         self._vae = AutoencoderKLWan.from_pretrained(self._pipeline_path, subfolder="vae", torch_dtype=torch.float32)
         self._transformer = A2Model.from_pretrained(self._model_path, torch_dtype=self._dtype)
-        self._transformer.to(self._device, dtype=self._dtype) 
 
-        self._pipe = A2Pipeline.from_pretrained(self._pipeline_path, transformer=self._transformer, vae=self._vae, image_encoder=self._image_encoder, torch_dtype=self._dtype)
+
+        self._text_encoder = UMT5EncoderModel.from_pretrained(self._pipeline_path, subfolder="text_encoder", torch_dtype=torch.float32)
+
+        quantize_(self._text_encoder, int8_weight_only())
+        quantize_(self._transformer, int8_weight_only())
+        quantize_(self._image_encoder, int8_weight_only())
 
         self._scheduler = UniPCMultistepScheduler(prediction_type='flow_prediction', use_flow_sigmas=True, num_train_timesteps=1000, flow_shift=8)
-        self._pipe.scheduler = self._scheduler 
+        self._pipe = A2Pipeline.from_pretrained(self._pipeline_path, scheduler=self._scheduler,
+                                                text_encoder=self._text_encoder, transformer=self._transformer,
+                                                vae=self._vae, image_encoder=self._image_encoder,
+                                                torch_dtype=self._dtype)
+
         self._pipe.to(self._device)
         self._video_processor = VideoProcessor(vae_scale_factor=VAE_SCALE_FACTOR_SPATIAL)
 

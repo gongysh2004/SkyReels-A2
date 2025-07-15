@@ -3,7 +3,7 @@ import os
 from PIL import Image 
 import numpy as np 
 from diffusers import AutoencoderKLWan
-from transformers import CLIPVisionModel 
+from transformers import CLIPVisionModel, UMT5EncoderModel 
 from diffusers.video_processor import VideoProcessor
 from diffusers import UniPCMultistepScheduler 
 from diffusers.utils import export_to_video, load_image 
@@ -13,12 +13,12 @@ from models.transformer_a2 import A2Model
 from models.pipeline_a2 import A2Pipeline 
 from models.utils import _crop_and_resize_pad, _crop_and_resize, write_mp4
 from huggingface_hub import snapshot_download
-
+from torchao.quantization import int8_weight_only, quantize_
 
 prompt = "A man is holding a teddy bear in the forest." 
 negative_prompt = "Bright tones, overexposed, static, blurred details, subtitles, style, works, paintings, images, static, overall gray, worst quality, low quality, JPEG compression residue, ugly, incomplete, extra fingers, poorly drawn hands, poorly drawn faces, deformed, disfigured, misshapen limbs, fused fingers, still picture, messy background, three legs, many people in the background, walking backwards"
 
-refer_images = ['assets/human.png', 'assets/thing.png', 'assets/env.png'] 
+refer_images = ['assets/person1.png', 'assets/thing.png', 'assets/env.png'] 
 width = 832
 height = 480 
 seed = 42 
@@ -33,26 +33,29 @@ else:
 # model parameters 
 device = "cuda"
 video_path = "output.mp4"
-pipeline_path = "Skywork/SkyReels-A2"
+pipeline_path = "/gm-models/model_scope/Skywork/SkyReels-A2"
 dtype = torch.bfloat16
 
 # download models
-snapshot_download(repo_id="Skywork/SkyReels-A2", local_dir="Skywork/SkyReels-A2")
+# snapshot_download(repo_id="Skywork/SkyReels-A2", local_dir="Skywork/SkyReels-A2")
 
 # load models 
-image_encoder = CLIPVisionModel.from_pretrained(pipeline_path, subfolder="image_encoder", torch_dtype=torch.float32) 
+image_encoder = CLIPVisionModel.from_pretrained(pipeline_path, subfolder="image_encoder", torch_dtype=torch.float32)
 vae = AutoencoderKLWan.from_pretrained(pipeline_path, subfolder="vae", torch_dtype=torch.float32)
-
+text_encoder = UMT5EncoderModel.from_pretrained(pipeline_path, subfolder="text_encoder", torch_dtype=torch.float32)
 # print("load transformer...")
 model_path = os.path.join(pipeline_path, 'transformer')
 transformer = A2Model.from_pretrained(model_path, torch_dtype=dtype, use_safetensors=True)
+quantize_(text_encoder, int8_weight_only())
+quantize_(transformer, int8_weight_only())
+quantize_(image_encoder, int8_weight_only())
 # # transformer.save_pretrained("transformer", max_shard_size="5GB") 
-transformer.to(device, dtype=dtype) 
-
-pipe = A2Pipeline.from_pretrained(pipeline_path, transformer=transformer, vae=vae, image_encoder=image_encoder, torch_dtype=dtype)
-
+# transformer.to(device, dtype=dtype) 
 scheduler = UniPCMultistepScheduler(prediction_type='flow_prediction', use_flow_sigmas=True, num_train_timesteps=1000, flow_shift=8)
-pipe.scheduler = scheduler 
+pipe = A2Pipeline.from_pretrained(pipeline_path, text_encoder=text_encoder, scheduler=scheduler, transformer=transformer, vae=vae, image_encoder=image_encoder, torch_dtype=dtype,)
+
+# scheduler = UniPCMultistepScheduler(prediction_type='flow_prediction', use_flow_sigmas=True, num_train_timesteps=1000, flow_shift=8)
+# pipe.scheduler = scheduler 
 pipe.to(device)
 
 
@@ -91,7 +94,7 @@ video_pt = pipe(
     guidance_scale=5.0,
     generator=generator,
     output_type="pt",
-    num_inference_steps=50,
+    num_inference_steps=20,
     vae_combine="before",
     tea_cache_l1_thresh=tea_cache_l1_thresh,
     tea_cache_model_id=tea_cache_model_id,
@@ -112,15 +115,15 @@ for batch_idx in range(batch_size):
 video_generate = batch_video_frames[0] 
 final_images = []
 for q in range(len(video_generate)): 
-    frame1 = _crop_and_resize_pad(load_image(image=refer_images[0]), height, width) 
-    frame2 = _crop_and_resize_pad(load_image(image=refer_images[1]), height, width) 
-    frame3 = _crop_and_resize_pad(load_image(image=refer_images[2]), height, width) 
+    # frame1 = _crop_and_resize_pad(load_image(image=refer_images[0]), height, width) 
+    # frame2 = _crop_and_resize_pad(load_image(image=refer_images[1]), height, width) 
+    # frame3 = _crop_and_resize_pad(load_image(image=refer_images[2]), height, width) 
     frame4 = Image.fromarray(np.array(video_generate[q])).convert("RGB")
-    result = Image.new('RGB', (width * 4, height),color="white")
-    result.paste(frame1, (0, 0)) 
-    result.paste(frame2, (width, 0)) 
-    result.paste(frame3, (width*2, 0)) 
-    result.paste(frame4, (width*3, 0)) 
+    result = Image.new('RGB', (width * 1, height),color="white")
+    # result.paste(frame1, (0, 0)) 
+    # result.paste(frame2, (width, 0)) 
+    # result.paste(frame3, (width*2, 0)) 
+    result.paste(frame4, (width*0, 0)) 
     final_images.append(np.array(result))
 
 write_mp4(video_path, final_images, fps=15) 
